@@ -21,7 +21,10 @@ from sklearn.tree import DecisionTreeRegressor
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import GridSearchCV
 from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import RandomizedSearchCV
+from sklearn.svm import SVR
 from pandas.plotting import scatter_matrix
+from scipy.stats import expon, reciprocal
 
 
 rooms_ix, bedrooms_ix, population_ix, household_ix = 3, 4, 5, 6
@@ -231,7 +234,7 @@ def train_with_linear_regression(data_prepared, labels, some_data, pl):
 
 def train_with_decision_tree(data_prepared, labels):
     tree_reg = DecisionTreeRegressor()
-    tree_reg.fit(housing_prepared, labels)
+    tree_reg.fit(data_prepared, labels)
     housing_prediction = tree_reg.predict(data_prepared)
     tree_mse = mean_squared_error(labels, housing_prediction)
     tree_rmse = np.sqrt(tree_mse)
@@ -274,6 +277,111 @@ def train_with_random_forest(data_prepared, labels, X_test_prepared, y_test):
     print(final_rmse)
 
 
+def train_with_svr(data_prepared, labels):
+    """
+    exercise 1
+    :param data_prepared:
+    :param labels:
+    :return:
+    """
+    svr_rbf = SVR(kernel="rbf", C=100, gamma=0.1, epsilon=0.1)
+    svr_lin = SVR(kernel="linear", C=100, gamma="auto")
+    svr_poly = SVR(kernel="poly", C=100, gamma="auto", degree=3, epsilon=0.1, coef0=1)
+
+    # rbf
+    print("rbf")
+    svr_rbf.fit(data_prepared, labels)
+    svr_rbf_predict = svr_rbf.predict(data_prepared)
+    svr_rbf_rmse = np.sqrt(mean_squared_error(labels, svr_rbf_predict))
+    print(svr_rbf_rmse)
+    svr_rbf_scores = cross_val_score(svr_rbf, data_prepared, labels, scoring="neg_mean_squared_error", cv=10)
+    svr_rbf_rmse_scores = np.sqrt(-svr_rbf_scores)
+    display_scores(svr_rbf_rmse_scores)
+
+    # lin
+    print("lin")
+    svr_lin.fit(data_prepared, labels)
+    svr_lin_predict = svr_lin.predict(data_prepared)
+    svr_lin_rmse = np.sqrt(mean_squared_error(labels, svr_lin_predict))
+    print(svr_lin_rmse)
+    svr_lin_scores = cross_val_score(svr_lin, data_prepared, labels, scoring="neg_mean_squared_error", cv=10)
+    svr_lin_rmse_scores = np.sqrt(-svr_lin_scores)
+    display_scores(svr_lin_rmse_scores)
+
+    # poly
+    print("poly")
+    svr_poly.fit(data_prepared, labels)
+    svr_poly_predict = svr_poly.predict(data_prepared)
+    svr_poly_rmse = np.sqrt(svr_poly_predict)
+    print(svr_poly_rmse)
+    svr_poly_scores = cross_val_score(svr_poly, data_prepared, labels, scoring="neg_mean_squared_error", cv=10)
+    svr_poly_rmse_scores = np.sqrt(-svr_poly_scores)
+    display_scores(svr_poly_rmse_scores)
+
+
+def train_with_svr_grid_search(data_prepared, labels):
+    """
+    exercise 1 from git
+    :param data_prepared:
+    :param labels:
+    :return:
+    """
+    svr_reg = SVR()
+
+    param_grid = [
+        {'kernel': ['linear'], 'C': [10., 30., 100., 300., 1000., 3000., 10000., 30000.0]},
+        {'kernel': ['rbf'], 'C': [1.0, 3.0, 10., 30., 100., 300., 1000.0], 'gamma': [0.01, 0.03, 0.1, 0.3, 1.0, 3.0]}
+    ]
+    grid_search = GridSearchCV(svr_reg, param_grid, cv=5, scoring='neg_mean_squared_error', verbose=2, n_jobs=4)
+    grid_search.fit(data_prepared, labels)
+
+    negative_mse = grid_search.best_score_
+    rmse = np.sqrt(-negative_mse)
+    print(rmse)
+
+    print(grid_search.best_params_)
+
+
+def train_with_svr_random_search(data_prepared, labels):
+    """
+    exercise 2
+    :param data_prepared:
+    :param labels:
+    :return:
+    """
+    param_distribs = {
+        'kernel': ['linear', 'rbf'],
+        'C': reciprocal(20, 200000),
+        'gamma': expon(scale=1.0)
+    }
+
+    svm_reg = SVR()
+    random_search = RandomizedSearchCV(svm_reg, param_distributions=param_distribs,
+                                n_iter=50, cv=5, scoring='neg_mean_squared_error',
+                                verbose=2, n_jobs=4, random_state=42)
+    random_search.fit(data_prepared, labels)
+    mse = random_search.best_score_
+    print("rmse: ", np.sqrt(-mse))
+    print("best params: ", random_search.best_params_)
+
+
+def indices_of_top_k(arr, k):
+    return np.sort(np.argpartition(np.array(arr), -k)[-k:])
+
+
+class TopFeatureSelector(BaseEstimator, TransformerMixin):
+    def __init__(self, feature_importances, k):
+        self.feature_importances = feature_importances
+        self.k = k
+
+    def fit(self, X, y=None):
+        self.feature_indices_ = indices_of_top_k(self.feature_importances, self.k)
+        return self
+
+    def transform(self, X):
+        return X[:, self.feature_indices_]
+
+
 def display_scores(scores):
     print("Scores:", scores)
     print("mean:", scores.mean())
@@ -311,7 +419,7 @@ if __name__ == '__main__':
 
     full_pipeline = create_full_pipeline(housing_num)
     housing_prepared = full_pipeline.fit_transform(housing)
-    print(housing_prepared.shape)
+    print(housing_prepared.shape, type(housing_prepared))
 
     X_test_prepared = full_pipeline.transform(X_test)
 
@@ -320,10 +428,19 @@ if __name__ == '__main__':
     # train_with_linear_regression(housing_prepared, housing_label, housing[:5], full_pipeline)
     # print('\ntree')
     # train_with_decision_tree(housing_prepared, housing_label)
-    print('\nforest')
-    train_with_random_forest(housing_prepared, housing_label, X_test_prepared, y_test)
+    # print('\nforest')
+    # train_with_random_forest(housing_prepared, housing_label, X_test_prepared, y_test)
 
+    # train_with_svr_grid_search(housing_prepared, housing_label)
+    # train_with_svr_random_search(housing_prepared, housing_label)
 
-
-
-
+    # exercise 3
+    feature_importances = np.array([0,  1,  7,  9, 12])
+    k = 5
+    preparation_and_feature_selection_pipeline = Pipeline([
+        ('preparation', full_pipeline),
+        ('feature_selection', TopFeatureSelector(feature_importances, k))
+    ])
+    housing_prepared_top_k_features = preparation_and_feature_selection_pipeline.fit_transform(housing)
+    print(housing_prepared_top_k_features[0: 3])
+    print(housing_prepared[0: 3, feature_importances])
